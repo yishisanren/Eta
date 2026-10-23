@@ -17,6 +17,24 @@ import org.robolectric.annotation.Config
 @Config(sdk = [36])
 class AgentRuntimeResultStoreTest {
     @Test
+    fun pendingResultsContinuePastFirstPageWithIdenticalTimestamps() {
+        val createdAt = System.currentTimeMillis()
+        repeat(10) { index ->
+            val runId = "run-${index.toString().padStart(2, '0')}"
+            AgentRuntimeResultStore.add(context, AgentRuntimeWire.CompletedRun(
+                handoff = AgentRuntimeWire.EntryHandoff(runId, AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE, "conversation-$index"),
+                result = AgentRuntimeWire.RunResult(runId, true, "完成"),
+                createdAt = createdAt,
+            ))
+        }
+
+        val first = AgentRuntimeResultStore.pendingPage(context)
+        val second = AgentRuntimeResultStore.pendingPage(context, first.last().createdAt, first.last().result.runId)
+        assertEquals(8, first.size)
+        assertEquals(listOf("run-08", "run-09"), second.map { it.result.runId })
+    }
+
+    @Test
     fun rewriteTargetSurvivesDatabaseReopenInResultHeaderArchiveAndCheckpoint() {
         val runId = "rewrite-storage-${System.nanoTime()}"
         val target = "assistant-original-1-0"

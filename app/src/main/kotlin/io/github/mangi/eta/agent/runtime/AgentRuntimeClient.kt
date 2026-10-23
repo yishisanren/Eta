@@ -30,7 +30,7 @@ internal class AgentRuntimeClient(
     }
 
     sealed interface ActiveRunQuery {
-        data class Known(val runId: String?) : ActiveRunQuery
+        data class Known(val runIds: Set<String>) : ActiveRunQuery
         data object Unavailable : ActiveRunQuery
     }
 
@@ -138,33 +138,49 @@ internal class AgentRuntimeClient(
     }
 
     fun queryCompletedRuns(): CompletedRunsQuery {
-        val resultLatch = CountDownLatch(1)
-        val resultRef = AtomicReference<List<AgentRuntimeWire.CompletedRun>>(emptyList())
-        val clientMessenger = Messenger(
-            DrainHandler { results ->
-                resultRef.set(results)
-                resultLatch.countDown()
-            }
-        )
-
         return withRuntimeMessenger<CompletedRunsQuery>(CompletedRunsQuery.Unavailable) { serviceMessenger ->
-            val msg = Message.obtain(null, AgentRuntimeWire.MSG_DRAIN_RESULTS)
-            msg.data = Bundle().apply { putBoolean("complete_result_refs", true) }
-            msg.replyTo = clientMessenger
-            serviceMessenger.send(msg)
-            if (resultLatch.await(RESPONSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                val resolved = resultRef.get().map { completed ->
-                    if (completed.result.contextSnapshotRef.isBlank()) completed else {
+            val resolved = mutableListOf<AgentRuntimeWire.CompletedRun>()
+            var afterTime = Long.MIN_VALUE
+            var afterRunId = ""
+            while (true) {
+                val page = readCompletedPage(serviceMessenger, afterTime, afterRunId)
+                    ?: return@withRuntimeMessenger CompletedRunsQuery.Unavailable
+                for (completed in page) {
+                    val fullRun = if (completed.result.contextSnapshotRef.isBlank()) completed else {
                         val full = readCompletedResult(serviceMessenger, completed)
                             ?: return@withRuntimeMessenger CompletedRunsQuery.Unavailable
                         completed.copy(result = full)
                     }
+                    resolved += fullRun
                 }
-                CompletedRunsQuery.Known(resolved)
-            } else {
-                CompletedRunsQuery.Unavailable
+                if (page.size < 8) break
+                val last = page.last()
+                afterTime = last.createdAt
+                afterRunId = last.result.runId.ifBlank { last.handoff.id }
             }
+            CompletedRunsQuery.Known(resolved)
         }
+    }
+
+    private fun readCompletedPage(
+        service: Messenger,
+        afterTime: Long,
+        afterRunId: String,
+    ): List<AgentRuntimeWire.CompletedRun>? {
+        val latch = CountDownLatch(1)
+        val result = AtomicReference<List<AgentRuntimeWire.CompletedRun>?>(null)
+        service.send(Message.obtain(null, AgentRuntimeWire.MSG_DRAIN_RESULTS).apply {
+            data = Bundle().apply {
+                putBoolean("complete_result_refs", true)
+                putLong("after_time", afterTime)
+                putString("after_run_id", afterRunId)
+            }
+            replyTo = Messenger(DrainHandler { page ->
+                result.set(page)
+                latch.countDown()
+            })
+        })
+        return if (latch.await(RESPONSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) result.get() else null
     }
 
     private fun readCompletedResult(
@@ -191,10 +207,10 @@ internal class AgentRuntimeClient(
 
     fun queryActiveRun(): ActiveRunQuery {
         val responseLatch = CountDownLatch(1)
-        val runIdRef = AtomicReference("")
+        val runIdsRef = AtomicReference<Set<String>>(emptySet())
         val clientMessenger = Messenger(
-            ActiveRunHandler { runId ->
-                runIdRef.set(runId)
+            ActiveRunHandler { runIds ->
+                runIdsRef.set(runIds)
                 responseLatch.countDown()
             }
         )
@@ -206,7 +222,7 @@ internal class AgentRuntimeClient(
             if (!responseLatch.await(RESPONSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 ActiveRunQuery.Unavailable
             } else {
-                ActiveRunQuery.Known(runIdRef.get().takeIf(String::isNotBlank))
+                ActiveRunQuery.Known(runIdsRef.get())
             }
         }
     }
@@ -320,11 +336,11 @@ internal class AgentRuntimeClient(
     }
 
     private class ActiveRunHandler(
-        private val onResponse: (String) -> Unit,
+        private val onResponse: (Set<String>) -> Unit,
     ) : Handler(Looper.getMainLooper()) {
         override fun handleMessage(msg: Message) {
             if (msg.what == AgentRuntimeWire.MSG_QUERY_ACTIVE_RUN_RESPONSE) {
-                onResponse(AgentRuntimeWire.runIdFromBundle(msg.data ?: return))
+                onResponse(AgentRuntimeWire.activeRunIdsFromBundle(msg.data ?: return))
             }
         }
     }

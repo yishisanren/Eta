@@ -44,8 +44,12 @@ internal object AgentRuntimeResultStore {
         }
     }
 
-    fun pendingPage(context: Context): List<AgentRuntimeWire.CompletedRun> = runBlocking(Dispatchers.IO) {
-        EtaDatabase.get(context.applicationContext).runtimeRunDao().pendingResultHeaders(8).map { header ->
+    fun pendingPage(
+        context: Context,
+        afterTime: Long = Long.MIN_VALUE,
+        afterRunId: String = "",
+    ): List<AgentRuntimeWire.CompletedRun> = runBlocking(Dispatchers.IO) {
+        EtaDatabase.get(context.applicationContext).runtimeRunDao().pendingResultHeaders(8, afterTime, afterRunId).map { header ->
             AgentRuntimeWire.CompletedRun(
                 AgentRuntimeWire.EntryHandoff(header.handoffId, header.handoffSource, header.handoffPayload, header.dismissEntrySurface),
                 AgentRuntimeWire.RunResult(header.runId, header.ok, "", contextSnapshotRef = header.runId,

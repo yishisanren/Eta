@@ -47,6 +47,7 @@ internal class AgentRuntimeRunExecutor(
     private val currentPermissions: () -> AgentRuntimePolicy.Permissions,
     private val snapshotRequest: (AgentRuntimeWire.RunRequest) -> AgentRuntimeWire.RunRequest,
     private val onAcceptedEvent: (AgentEvent, EntrySurfaceGuard?) -> Unit,
+    private val onForegroundAcquired: () -> Unit = {},
     private val persistArtifacts: (
         AgentRuntimeWire.RunRequest,
         AgentRuntimeWire.RunResult,
@@ -68,6 +69,7 @@ internal class AgentRuntimeRunExecutor(
         request: AgentRuntimeWire.RunRequest,
     ): Outcome {
         val runController = session.controller
+        val foregroundGate = AgentForegroundRunGate(runController)
         val archivedEvents = AgentRunArchiveStore.createEventBuffer(request.handoff)
         var entrySurfaceGuard: EntrySurfaceGuard? = null
         var toolExecutor: AutoCloseable? = null
@@ -190,6 +192,10 @@ internal class AgentRuntimeRunExecutor(
                 beforeToolExecution = { toolName ->
                     val requiresAccessibility =
                         AgentToolRequirements.requiresAccessibility(toolName)
+                    if (requiresAccessibility || AgentOverlayVisibilityPolicy.requiresEntrySurfaceDismissal(toolName)) {
+                        foregroundGate.enter()
+                        onForegroundAcquired()
+                    }
                     if (
                         !requiresAccessibility &&
                         !AgentOverlayVisibilityPolicy.requiresEntrySurfaceDismissal(toolName)
@@ -358,6 +364,7 @@ internal class AgentRuntimeRunExecutor(
         } finally {
             runCatching { toolsBinding?.close() }
             runCatching { toolExecutor?.close() }
+            foregroundGate.close()
         }
 
         if (cancelled && session.isTerminal) {

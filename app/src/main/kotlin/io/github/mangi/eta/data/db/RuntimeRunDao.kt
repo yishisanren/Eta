@@ -29,8 +29,12 @@ internal interface RuntimeRunDao : ChunkedTextDao {
         contextSnapshotJson = restoreText("runtime_inflight_runs", row.runId, "contextSnapshotJson", row.contextSnapshotJson),
     )
 
-    @Query("SELECT run_id, handoff_id, handoff_source, handoff_payload, dismiss_entry_surface, ok, operation, rewrite_target_message_id, created_at FROM runtime_results ORDER BY created_at ASC LIMIT :limit")
-    suspend fun pendingResultHeaders(limit: Int): List<RuntimeResultHeader>
+    @Query("SELECT run_id, handoff_id, handoff_source, handoff_payload, dismiss_entry_surface, ok, operation, rewrite_target_message_id, created_at FROM runtime_results WHERE created_at > :afterTime OR (created_at = :afterTime AND run_id > :afterRunId) ORDER BY created_at ASC, run_id ASC LIMIT :limit")
+    suspend fun pendingResultHeaders(
+        limit: Int,
+        afterTime: Long = Long.MIN_VALUE,
+        afterRunId: String = "",
+    ): List<RuntimeResultHeader>
 
     @Query("SELECT * FROM runtime_results WHERE run_id = :runId AND handoff_payload = :owner")
     suspend fun ownedResultRow(runId: String, owner: String): RuntimeResultEntity?

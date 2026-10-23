@@ -75,7 +75,7 @@ internal object AgentRuntimeWire {
     /** client -> service：查询当前仍在执行或提交终态的 run。 */
     const val MSG_QUERY_ACTIVE_RUN = 9
 
-    /** service -> client：返回当前 active runId；空字符串表示没有。 */
+    /** service -> client：返回所有仍在执行的 runId。 */
     const val MSG_QUERY_ACTIVE_RUN_RESPONSE = 10
 
     /** client -> service：重新订阅指定 run 的安全事件重放、实时事件和最终结果。 */
@@ -600,6 +600,13 @@ internal object AgentRuntimeWire {
     fun ackBundle(runId: String): Bundle = Bundle().apply {
         putString(KEY_RUN_ID, runId)
     }
+
+    fun activeRunIdsBundle(runIds: Collection<String>): Bundle = Bundle().apply {
+        putStringArrayList("active_run_ids", ArrayList(runIds))
+    }
+
+    fun activeRunIdsFromBundle(bundle: Bundle): Set<String> =
+        bundle.getStringArrayList("active_run_ids")?.filter(String::isNotBlank)?.toSet().orEmpty()
 
     fun attachRunResponseBundle(runId: String, attached: Boolean): Bundle = Bundle().apply {
         putString(KEY_RUN_ID, runId)

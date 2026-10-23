@@ -4,6 +4,8 @@ import android.app.Application
 import io.github.mangi.eta.agent.model.AgentModelClient
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -13,6 +15,34 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], application = Application::class)
 class AgentRuntimeServiceRetentionTest {
+    @Test
+    fun cancellingOneRunDoesNotCancelOtherRuns() {
+        val controller = Robolectric.buildService(AgentRuntimeService::class.java).create()
+        try {
+            val service = controller.get()
+            val first = AgentRuntimeSession("run-first")
+            val second = AgentRuntimeSession("run-second")
+            val third = AgentRuntimeSession("run-third")
+            @Suppress("UNCHECKED_CAST")
+            val sessions = AgentRuntimeService::class.java.getDeclaredField("sessions").apply {
+                isAccessible = true
+            }.get(service) as MutableMap<String, AgentRuntimeSession>
+            sessions[first.runId] = first
+            sessions[second.runId] = second
+            sessions[third.runId] = third
+
+            AgentRuntimeService::class.java.getDeclaredMethod("cancelRun", String::class.java).apply {
+                isAccessible = true
+            }.invoke(service, first.runId)
+
+            assertTrue(first.controller.isCancelled)
+            assertFalse(second.controller.isCancelled)
+            assertFalse(third.controller.isCancelled)
+        } finally {
+            controller.destroy()
+        }
+    }
+
     @Test
     fun dismissReleasesContinuationHistoryBeforeTheServiceIsDestroyed() {
         val controller = Robolectric.buildService(AgentRuntimeService::class.java).create()
